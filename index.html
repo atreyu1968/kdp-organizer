@@ -12,7 +12,15 @@ import {
 } from 'lucide-react';
 
 // --- CONFIGURACIÓN FIREBASE (REEMPLAZAR CON TUS CLAVES) ---
-const firebaseConfig = JSON.parse(__firebase_config);
+const firebaseConfig = {
+  apiKey: "AIzaSyCDVs4lUlsy_PVqa-bk4klMOlwaoa5MOnc",
+  authDomain: "kdp-organizer.firebaseapp.com",
+  projectId: "kdp-organizer",
+  storageBucket: "kdp-organizer.firebasestorage.app",
+  messagingSenderId: "5768155970",
+  appId: "1:5768155970:web:af0d95942734a2e9426edb",
+  measurementId: "G-JCFEL9CHCR"
+};
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
