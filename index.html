@@ -4,13 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KDP Master Engine v20 - Enterprise</title>
-    <!-- Tailwind CSS -->
+    <!-- Frameworks Base -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React & Babel -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
@@ -19,30 +17,25 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-        .shimmer {
-            background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
-            background-size: 200% 100%;
-            animation: shimmer 1.5s infinite;
-        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin-slow { animation: spin 2s linear infinite; }
     </style>
 </head>
 <body>
     <div id="root">
-        <!-- Loader inicial para evitar pantalla en blanco -->
-        <div style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: white;">
-            <div style="width: 50px; height: 50px; border: 5px solid #334155; border-top-color: #6366f1; border-radius: 50%; animate: spin 1s linear infinite;"></div>
-            <p style="margin-top: 20px; font-weight: 800; letter-spacing: 0.2em; font-size: 12px;">CARGANDO KDP ENGINE...</p>
+        <!-- Pantalla de carga mejorada -->
+        <div id="fallback-loader" style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: white;">
+            <div style="width: 40px; height: 40px; border: 4px solid #1e293b; border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+            <p style="margin-top: 24px; font-weight: 800; letter-spacing: 0.3em; font-size: 10px; color: #94a3b8;">ESTABLECIENDO CONEXIÓN SEGURA...</p>
         </div>
     </div>
 
-    <!-- Firebase SDK (Modular) -->
+    <!-- Inicialización de Firebase -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, collection, updateDoc, deleteDoc, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // Tu configuración pegada correctamente
         const firebaseConfig = {
             apiKey: "AIzaSyCDVs4lUlsy_PVqa-bk4klMOlwaoa5MOnc",
             authDomain: "kdp-organizer.firebaseapp.com",
@@ -58,27 +51,32 @@
             const auth = getAuth(app);
             const db = getFirestore(app);
 
-            // Exportamos de forma segura para React
             window.KDP_CORE = {
                 db, auth, 
                 utils: { doc, setDoc, onSnapshot, collection, updateDoc, deleteDoc, increment, signInAnonymously, onAuthStateChanged },
                 isReady: true
             };
-            
-            // Disparamos evento de carga lista
-            window.dispatchEvent(new CustomEvent('kdp-ready'));
+            console.log("Firebase OK");
         } catch (error) {
-            document.getElementById('root').innerHTML = `<div style="padding: 20px; color: red;">Error de Firebase: ${error.message}</div>`;
+            console.error("Firebase Error:", error);
+            document.body.innerHTML = `<div style="color:red; padding:20px;">Error Crítico: No se pudo conectar con Firebase.</div>`;
         }
     </script>
 
     <!-- App Logic -->
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
         
+        // Componente de Icono a prueba de errores
         const Icon = ({ name, size = 20, className = "" }) => {
-            const IconComp = lucide[name] || lucide.HelpCircle;
-            return <IconComp size={size} className={className} />;
+            try {
+                // En la versión CDN, lucide expone los iconos directamente o dentro de un objeto
+                const IconComp = lucide[name] || lucide.icons[name];
+                if (!IconComp) return <div style={{width: size, height: size}} className="bg-slate-200 rounded-full animate-pulse" />;
+                return <IconComp size={size} className={className} />;
+            } catch (e) {
+                return <div className="w-4 h-4 bg-slate-100 rounded-full" />;
+            }
         };
 
         const LANGUAGES = [
@@ -91,7 +89,7 @@
         ];
 
         function App() {
-            const [isReady, setIsReady] = useState(false);
+            const [appReady, setAppReady] = useState(false);
             const [activeTab, setActiveTab] = useState('calendar');
             const [currentWeek, setCurrentWeek] = useState(1);
             const [authors, setAuthors] = useState([]);
@@ -101,44 +99,49 @@
             const [isGenerating, setIsGenerating] = useState(false);
 
             useEffect(() => {
-                const init = () => {
-                    if (window.KDP_CORE) {
-                        const { auth, utils, db } = window.KDP_CORE;
-                        utils.onAuthStateChanged(auth, (u) => {
-                            if (!u) {
-                                utils.signInAnonymously(auth);
-                            } else {
-                                // Sincronización
-                                utils.onSnapshot(utils.collection(db, 'authors'), (snap) => {
-                                    let list = [];
-                                    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-                                    if (list.length === 0) seedAuthors(utils, db);
-                                    setAuthors(list.sort((a,b) => a.createdAt - b.createdAt));
-                                });
-                                utils.onSnapshot(utils.collection(db, 'projects'), (snap) => {
-                                    let list = [];
-                                    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-                                    setProjects(list);
-                                });
-                                utils.onSnapshot(utils.collection(db, 'status'), (snap) => {
-                                    let data = {};
-                                    snap.forEach(d => data[d.id] = d.data());
-                                    setWeeklyStatus(data);
-                                    setIsReady(true);
-                                });
-                            }
+                const interval = setInterval(() => {
+                    if (window.KDP_CORE && window.lucide) {
+                        clearInterval(interval);
+                        startApp();
+                    }
+                }, 300);
+                return () => clearInterval(interval);
+            }, []);
+
+            const startApp = () => {
+                const { auth, utils, db } = window.KDP_CORE;
+                utils.onAuthStateChanged(auth, (user) => {
+                    if (!user) {
+                        utils.signInAnonymously(auth);
+                    } else {
+                        // Carga de datos
+                        utils.onSnapshot(utils.collection(db, 'authors'), (snap) => {
+                            let list = [];
+                            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                            if (list.length === 0) seedAuthors(utils, db);
+                            setAuthors(list.sort((a,b) => (a.createdAt || 0) - (b.createdAt || 0)));
+                        });
+
+                        utils.onSnapshot(utils.collection(db, 'projects'), (snap) => {
+                            let list = [];
+                            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                            setProjects(list);
+                        });
+
+                        utils.onSnapshot(utils.collection(db, 'status'), (snap) => {
+                            let data = {};
+                            snap.forEach(d => data[d.id] = d.data());
+                            setWeeklyStatus(data);
+                            setAppReady(true);
                         });
                     }
-                };
-
-                window.addEventListener('kdp-ready', init);
-                if (window.KDP_CORE) init();
-                return () => window.removeEventListener('kdp-ready', init);
-            }, []);
+                });
+            };
 
             const seedAuthors = async (utils, db) => {
                 for (let i = 1; i <= 25; i++) {
-                    await utils.setDoc(utils.doc(db, 'authors', `auth-${i}`), {
+                    const id = `auth-${i}`;
+                    await utils.setDoc(utils.doc(db, 'authors', id), {
                         name: `Sello Editorial ${i}`,
                         active: true,
                         createdAt: Date.now() + i
@@ -146,114 +149,123 @@
                 }
             };
 
-            const generateIdea = async (genre, authorId) => {
-                if (!authorId) return alert("Selecciona un sello editorial.");
-                setIsGenerating(true);
-                const { utils, db } = window.KDP_CORE;
-                try {
-                    const id = `proj-${Date.now()}`;
-                    await utils.setDoc(utils.doc(db, 'projects', id), {
-                        id, authorId, title: `${genre} - Vol. 1`, createdAt: Date.now(),
-                        content: Array.from({length: 40}).map((_, i) => ({ t: `Capítulo ${i+1}`, s: "Estrategia de trama generada." }))
-                    });
-                } finally { setIsGenerating(false); }
-            };
-
             const activeAuthors = useMemo(() => authors.filter(a => a.active), [authors]);
+            
             const slots = useMemo(() => {
-                if (!activeAuthors.length) return [];
+                if (activeAuthors.length === 0) return [];
                 const start = (currentWeek - 1) * 10;
                 return Array.from({length: 10}).map((_, i) => {
                     const idx = (start + i) % activeAuthors.length;
                     const langIdx = Math.floor((start + i) / activeAuthors.length) % LANGUAGES.length;
                     const key = `w${currentWeek}-s${i}`;
                     return {
-                        key, author: activeAuthors[idx], lang: LANGUAGES[langIdx],
+                        key,
+                        author: activeAuthors[idx],
+                        lang: LANGUAGES[langIdx],
                         project: projects.find(p => p.id === weeklyStatus[key]?.projectId),
                         isPublished: weeklyStatus[key]?.status === 'published'
                     };
                 });
             }, [currentWeek, activeAuthors, projects, weeklyStatus]);
 
-            if (!isReady) return (
-                <div className="h-screen flex flex-col items-center justify-center bg-slate-900 text-white">
-                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="font-black text-[10px] tracking-[0.3em] uppercase animate-pulse">Sincronizando con la nube...</p>
-                </div>
-            );
+            if (!appReady) return null; // El loader HTML sigue visible hasta que appReady sea true
 
             return (
-                <div className="min-h-screen bg-[#f8fafc]">
+                <div className="min-h-screen bg-[#f8fafc] animate-in fade-in duration-700">
                     <div className="max-w-7xl mx-auto p-4 md:p-8">
-                        {/* Header */}
-                        <header className="flex flex-col lg:flex-row items-center justify-between gap-6 mb-12 bg-white p-6 rounded-[2.5rem] shadow-xl border border-white">
+                        {/* Header Superior */}
+                        <header className="flex flex-col lg:flex-row items-center justify-between gap-6 mb-10 bg-white p-6 rounded-[2.5rem] shadow-xl border border-white">
                             <div className="flex items-center gap-4">
-                                <div className="bg-indigo-600 p-3 rounded-2xl shadow-lg"><Icon name="Rocket" color="white" /></div>
+                                <div className="bg-indigo-600 p-3 rounded-2xl shadow-lg shadow-indigo-100">
+                                    <Icon name="Rocket" color="white" />
+                                </div>
                                 <div>
-                                    <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">KDP Engine Pro</h1>
-                                    <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Enterprise Edition v20</p>
+                                    <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">KDP Master Engine</h1>
+                                    <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Enterprise Ownership v20</p>
                                 </div>
                             </div>
-                            <nav className="flex gap-1 bg-slate-100 p-1.5 rounded-2xl">
-                                {['calendar', 'research', 'authors'].map(tab => (
-                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'}`}>
-                                        {tab === 'calendar' ? 'Calendario' : tab === 'research' ? 'Generador' : 'Marcas'}
+                            <nav className="flex gap-1 bg-slate-100 p-1.5 rounded-2xl overflow-x-auto no-scrollbar">
+                                {[
+                                    { id: 'calendar', label: 'Calendario', icon: 'Calendar' },
+                                    { id: 'research', label: 'Generador', icon: 'Sparkles' },
+                                    { id: 'authors', label: 'Portafolio', icon: 'Briefcase' }
+                                ].map(tab => (
+                                    <button 
+                                        key={tab.id}
+                                        onClick={() => setActiveTab(tab.id)}
+                                        className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'}`}
+                                    >
+                                        <Icon name={tab.icon} size={14} /> {tab.label}
                                     </button>
                                 ))}
                             </nav>
                         </header>
 
                         {activeTab === 'calendar' && (
-                            <div className="space-y-10">
-                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-                                    <div className="bg-white p-8 rounded-[3rem] border border-slate-200 flex items-center justify-between">
-                                        <button onClick={() => setCurrentWeek(w => Math.max(1, w - 1))} className="p-2"><Icon name="ChevronLeft" /></button>
+                            <div className="space-y-8">
+                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                                    <div className="bg-white p-8 rounded-[3rem] border border-slate-200 flex items-center justify-between shadow-sm">
+                                        <button onClick={() => setCurrentWeek(w => Math.max(1, w - 1))} className="p-3 bg-slate-50 rounded-xl hover:bg-indigo-50 transition-colors"><Icon name="ChevronLeft" /></button>
                                         <div className="text-center">
                                             <p className="text-[10px] font-black text-slate-400 uppercase">Semana</p>
                                             <span className="text-5xl font-black text-indigo-600">{currentWeek}</span>
                                         </div>
-                                        <button onClick={() => setCurrentWeek(w => w + 1)} className="p-2"><Icon name="ChevronRight" /></button>
+                                        <button onClick={() => setCurrentWeek(w => w + 1)} className="p-3 bg-slate-50 rounded-xl hover:bg-indigo-50 transition-colors"><Icon name="ChevronRight" /></button>
                                     </div>
                                     <div className="bg-slate-900 p-10 rounded-[3rem] shadow-2xl flex items-center justify-around col-span-3 text-white">
-                                        <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Marcas</p><p className="text-3xl font-black">{authors.length}</p></div>
-                                        <div className="text-center border-x border-slate-800 px-12"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Proyectos</p><p className="text-3xl font-black">{projects.length}</p></div>
-                                        <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Status</p><p className="text-xl font-black text-emerald-400">READY</p></div>
+                                        <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Semanales</p><p className="text-3xl font-black text-indigo-400">10</p></div>
+                                        <div className="text-center border-x border-slate-800 px-12"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Portafolio</p><p className="text-3xl font-black">{projects.length}</p></div>
+                                        <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Marcas</p><p className="text-3xl font-black text-emerald-400">{authors.length}</p></div>
                                     </div>
                                 </div>
 
-                                <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-xl overflow-hidden overflow-x-auto">
+                                <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden">
                                     <table className="w-full text-left">
                                         <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
                                             <tr>
                                                 <th className="pl-12 py-8">Sello Editorial</th>
                                                 <th className="px-6 py-8">Mercado</th>
-                                                <th className="px-6 py-8">Asignación</th>
+                                                <th className="px-6 py-8">Proyecto Asignado</th>
                                                 <th className="pr-12 py-8 text-right">KDP</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-50">
                                             {slots.map((slot, i) => (
-                                                <tr key={i} className="hover:bg-indigo-50/20 transition-all group">
-                                                    <td className="pl-12 py-8"><span className="text-sm font-black text-slate-800 uppercase">{slot.author?.name}</span></td>
-                                                    <td className="px-6 py-8"><span className={`px-3 py-1.5 rounded-lg text-[10px] font-black border ${slot.lang.color}`}>{slot.lang.code}</span></td>
+                                                <tr key={i} className="hover:bg-slate-50/50 transition-all group">
+                                                    <td className="pl-12 py-8">
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 font-black text-xs group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-inner">{i + 1}</div>
+                                                            <span className="text-sm font-black text-slate-800 uppercase tracking-tight">{slot.author?.name}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-8"><span className={`px-4 py-2 rounded-xl text-[10px] font-black border ${slot.lang.color}`}>{slot.lang.code}</span></td>
                                                     <td className="px-6 py-8">
-                                                        <select 
-                                                            className="bg-transparent text-sm font-bold text-slate-600 outline-none"
-                                                            value={weeklyStatus[slot.key]?.projectId || ''}
-                                                            onChange={(e) => window.KDP_CORE.utils.setDoc(window.KDP_CORE.utils.doc(window.KDP_CORE.db, 'status', slot.key), { projectId: e.target.value }, { merge: true })}
-                                                        >
-                                                            <option value="">-- Vacío --</option>
-                                                            {projects.filter(p => p.authorId === slot.author?.id).map(p => (
-                                                                <option key={p.id} value={p.id}>{p.title}</option>
-                                                            ))}
-                                                        </select>
+                                                        <div className="flex items-center gap-3">
+                                                            <select 
+                                                                className="bg-transparent border-none text-sm font-bold text-slate-600 outline-none w-56 focus:ring-0 cursor-pointer"
+                                                                value={weeklyStatus[slot.key]?.projectId || ''}
+                                                                onChange={(e) => {
+                                                                    const { utils, db } = window.KDP_CORE;
+                                                                    utils.setDoc(utils.doc(db, 'status', slot.key), { projectId: e.target.value }, { merge: true });
+                                                                }}
+                                                            >
+                                                                <option value="">-- Sin asignar --</option>
+                                                                {projects.filter(p => p.authorId === slot.author?.id).map(p => (
+                                                                    <option key={p.id} value={p.id}>{p.title}</option>
+                                                                ))}
+                                                            </select>
+                                                            {slot.project && <button onClick={() => setViewingProject(slot.project)} className="text-indigo-600 hover:scale-110 transition-transform"><Icon name="Eye" size={18}/></button>}
+                                                        </div>
                                                     </td>
                                                     <td className="pr-12 py-8 text-right">
                                                         <button 
-                                                            onClick={() => window.KDP_CORE.utils.setDoc(window.KDP_CORE.utils.doc(window.KDP_CORE.db, 'status', slot.key), { status: slot.isPublished ? 'pending' : 'published' }, { merge: true })}
-                                                            className={`p-3 rounded-2xl ${slot.isPublished ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-50 text-slate-300'}`}
+                                                            onClick={() => {
+                                                                const { utils, db } = window.KDP_CORE;
+                                                                utils.setDoc(utils.doc(db, 'status', slot.key), { status: slot.isPublished ? 'pending' : 'published' }, { merge: true });
+                                                            }}
+                                                            className={`p-4 rounded-3xl transition-all ${slot.isPublished ? 'bg-emerald-100 text-emerald-600 shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-300'}`}
                                                         >
-                                                            <Icon name="CheckCircle2" />
+                                                            <Icon name="CheckCircle2" size={24} />
                                                         </button>
                                                     </td>
                                                 </tr>
@@ -264,57 +276,24 @@
                             </div>
                         )}
 
-                        {activeTab === 'research' && (
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in slide-in-from-bottom duration-500">
-                                <div className="bg-white p-10 rounded-[3rem] border border-slate-200 shadow-xl h-fit space-y-6">
-                                    <h3 className="text-xl font-black text-slate-800 uppercase flex items-center gap-3"><Icon name="Sparkles" className="text-amber-500" /> Generador</h3>
-                                    <div>
-                                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-2">Marca Dueña</label>
-                                        <select id="genAuthor" className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm font-bold">
-                                            <option value="">Elegir responsable...</option>
-                                            {authors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                                        </select>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-black text-slate-400 uppercase block mb-2">Nicho</label>
-                                        <select id="genGenre" className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm font-bold">
-                                            <option value="Thriller Psicológico">Thriller Psicológico</option>
-                                            <option value="Romance Histórico">Romance Histórico</option>
-                                            <option value="Biohacking">Biohacking</option>
-                                        </select>
-                                    </div>
-                                    <button 
-                                        disabled={isGenerating}
-                                        onClick={() => generateIdea(document.getElementById('genGenre').value, document.getElementById('genAuthor').value)}
-                                        className="w-full bg-indigo-600 text-white py-5 rounded-3xl font-black text-xs uppercase shadow-xl"
-                                    >
-                                        {isGenerating ? "Creando..." : "Lanzar Producción"}
-                                    </button>
-                                </div>
-                                <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    {projects.slice(0, 4).map(p => (
-                                        <div key={p.id} className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
-                                            <h4 className="text-xl font-black text-slate-800 mb-6">{p.title}</h4>
-                                            <button onClick={() => setViewingProject(p)} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase">Ver Biblia</button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
                         {activeTab === 'authors' && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in slide-in-from-bottom duration-500">
                                 {authors.map((a, i) => (
-                                    <div key={a.id} className="bg-white p-8 rounded-[3.5rem] border border-slate-200 shadow-sm relative group">
-                                        <p className="text-[9px] font-black text-slate-400 uppercase mb-4">Sello {i+1}</p>
+                                    <div key={a.id} className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:border-indigo-200 transition-all">
+                                        <div className="absolute -top-4 -right-4 bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center font-black text-slate-200 text-2xl group-hover:bg-indigo-50 transition-all">{i+1}</div>
+                                        <p className="text-[9px] font-black text-slate-300 uppercase mb-4 tracking-widest">Sello Operativo</p>
                                         <input 
-                                            type="text" value={a.name}
-                                            onChange={(e) => window.KDP_CORE.utils.updateDoc(window.KDP_CORE.utils.doc(window.KDP_CORE.db, 'authors', a.id), { name: e.target.value })}
-                                            className="w-full text-xl font-black text-slate-800 bg-transparent outline-none mb-6"
+                                            type="text" 
+                                            value={a.name}
+                                            onChange={(e) => {
+                                                const { utils, db } = window.KDP_CORE;
+                                                utils.updateDoc(utils.doc(db, 'authors', a.id), { name: e.target.value });
+                                            }}
+                                            className="w-full text-xl font-black text-slate-800 bg-transparent outline-none mb-8 border-b-2 border-transparent focus:border-indigo-100 pb-2"
                                         />
                                         <div className="pt-6 border-t border-slate-50 flex justify-between items-center">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase">Activos: {projects.filter(p => p.authorId === a.id).length}</span>
-                                            <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_#10b981]"></div>
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Activos: {projects.filter(p => p.authorId === a.id).length}</p>
+                                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></div>
                                         </div>
                                     </div>
                                 ))}
@@ -322,23 +301,34 @@
                         )}
                     </div>
 
-                    {/* Modal Biblia */}
+                    {/* Modal Detalle Proyecto */}
                     {viewingProject && (
                         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-50 flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-4xl rounded-[4rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-                                <div className="px-12 py-10 bg-slate-50 border-b border-slate-100 flex justify-between items-start">
-                                    <h3 className="text-3xl font-black text-slate-800">{viewingProject.title}</h3>
-                                    <button onClick={() => setViewingProject(null)} className="p-4"><Icon name="X" /></button>
+                            <div className="bg-white w-full max-w-5xl rounded-[4rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+                                <div className="px-14 py-12 bg-slate-50 border-b border-slate-100 flex justify-between items-start">
+                                    <div>
+                                        <h3 className="text-3xl font-black text-slate-800 leading-tight">{viewingProject.title}</h3>
+                                        <p className="text-xs font-bold text-indigo-500 mt-2 uppercase tracking-widest">Dosier Técnico de Producción</p>
+                                    </div>
+                                    <button onClick={() => setViewingProject(null)} className="p-2 text-slate-300 hover:text-rose-500 transition-colors"><Icon name="X" size={40}/></button>
                                 </div>
-                                <div className="p-12 overflow-y-auto custom-scrollbar flex-1">
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="p-14 overflow-y-auto custom-scrollbar flex-1 bg-white">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         {viewingProject.content?.map((c, i) => (
-                                            <div key={i} className="p-6 bg-slate-50 rounded-2xl border border-slate-100">
-                                                <p className="text-xs font-black text-slate-400 uppercase mb-1">Capítulo {i+1}</p>
-                                                <p className="text-sm font-bold text-slate-700">{c.t}</p>
+                                            <div key={i} className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 hover:bg-white hover:shadow-xl transition-all duration-300 group">
+                                                <div className="flex gap-6">
+                                                    <span className="text-3xl font-black text-indigo-100 group-hover:text-indigo-600 transition-colors">{(i+1).toString().padStart(2,'0')}</span>
+                                                    <div>
+                                                        <p className="text-sm font-black text-slate-800 uppercase mb-2 tracking-tight">{c.t}</p>
+                                                        <p className="text-xs text-slate-400 leading-relaxed font-medium italic">{c.s || "Resumen operativo pendiente."}</p>
+                                                    </div>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                                <div className="px-14 py-8 border-t border-slate-100 flex justify-end bg-slate-50/50">
+                                    <button onClick={() => setViewingProject(null)} className="bg-slate-900 text-white px-12 py-4 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl hover:bg-indigo-600 transition-all">Cerrar Biblia</button>
                                 </div>
                             </div>
                         </div>
@@ -347,8 +337,18 @@
             );
         }
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
+        // Renderizado Final
+        const rootElement = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootElement);
         root.render(<App />);
+
+        // Ocultamos el loader inicial cuando React está listo
+        const observer = new MutationObserver(() => {
+            const loader = document.getElementById('fallback-loader');
+            if (loader) loader.style.display = 'none';
+            observer.disconnect();
+        });
+        observer.observe(rootElement, { childList: true });
     </script>
 </body>
 </html>
