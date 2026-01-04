@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>KDP Master Engine v20 - Enterprise</title>
-    <!-- Frameworks Base -->
+    <!-- Cargando librerías base -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -18,19 +18,20 @@
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .animate-spin-slow { animation: spin 2s linear infinite; }
+        .loader-spin { animation: spin 1s linear infinite; }
     </style>
 </head>
 <body>
+    <!-- Contenedor Raíz -->
     <div id="root">
-        <!-- Pantalla de carga mejorada -->
-        <div id="fallback-loader" style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: white;">
-            <div style="width: 40px; height: 40px; border: 4px solid #1e293b; border-top-color: #6366f1; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-            <p style="margin-top: 24px; font-weight: 800; letter-spacing: 0.3em; font-size: 10px; color: #94a3b8;">ESTABLECIENDO CONEXIÓN SEGURA...</p>
+        <div id="initial-loading" style="height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: white;">
+            <div class="loader-spin" style="width: 40px; height: 40px; border: 4px solid #1e293b; border-top-color: #6366f1; border-radius: 50%;"></div>
+            <p style="margin-top: 20px; font-weight: 800; letter-spacing: 0.2em; font-size: 10px; color: #94a3b8;">ESTABLECIENDO CONEXIÓN CON KDP ENGINE...</p>
+            <p id="debug-msg" style="margin-top: 10px; font-size: 10px; color: #475569;">Iniciando módulos...</p>
         </div>
     </div>
 
-    <!-- Inicialización de Firebase -->
+    <!-- Módulo Firebase -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
@@ -51,31 +52,29 @@
             const auth = getAuth(app);
             const db = getFirestore(app);
 
-            window.KDP_CORE = {
-                db, auth, 
-                utils: { doc, setDoc, onSnapshot, collection, updateDoc, deleteDoc, increment, signInAnonymously, onAuthStateChanged },
-                isReady: true
-            };
-            console.log("Firebase OK");
-        } catch (error) {
-            console.error("Firebase Error:", error);
-            document.body.innerHTML = `<div style="color:red; padding:20px;">Error Crítico: No se pudo conectar con Firebase.</div>`;
+            // Asignación global para que React lo vea
+            window.KDP_DB = db;
+            window.KDP_AUTH = auth;
+            window.KDP_SDK = { doc, setDoc, onSnapshot, collection, updateDoc, deleteDoc, increment, signInAnonymously, onAuthStateChanged };
+            window.FB_READY = true;
+            document.getElementById('debug-msg').innerText = "Firebase Conectado. Esperando a React...";
+        } catch (e) {
+            document.getElementById('debug-msg').innerText = "Error de Firebase: " + e.message;
         }
     </script>
 
-    <!-- App Logic -->
+    <!-- Código React -->
     <script type="text/babel">
-        const { useState, useEffect, useMemo, useCallback } = React;
-        
-        // Componente de Icono a prueba de errores
+        const { useState, useEffect, useMemo } = React;
+
+        // Componente de Icono Seguro
         const Icon = ({ name, size = 20, className = "" }) => {
             try {
-                // En la versión CDN, lucide expone los iconos directamente o dentro de un objeto
-                const IconComp = lucide[name] || lucide.icons[name];
-                if (!IconComp) return <div style={{width: size, height: size}} className="bg-slate-200 rounded-full animate-pulse" />;
-                return <IconComp size={size} className={className} />;
+                const IconComponent = lucide[name];
+                if (!IconComponent) return <div style={{width: size, height: size}} className="bg-slate-200 rounded-md" />;
+                return <IconComponent size={size} className={className} />;
             } catch (e) {
-                return <div className="w-4 h-4 bg-slate-100 rounded-full" />;
+                return null;
             }
         };
 
@@ -89,59 +88,69 @@
         ];
 
         function App() {
-            const [appReady, setAppReady] = useState(false);
+            const [status, setStatus] = useState('loading'); // loading, ready, error
             const [activeTab, setActiveTab] = useState('calendar');
             const [currentWeek, setCurrentWeek] = useState(1);
             const [authors, setAuthors] = useState([]);
             const [projects, setProjects] = useState([]);
             const [weeklyStatus, setWeeklyStatus] = useState({});
             const [viewingProject, setViewingProject] = useState(null);
-            const [isGenerating, setIsGenerating] = useState(false);
 
             useEffect(() => {
-                const interval = setInterval(() => {
-                    if (window.KDP_CORE && window.lucide) {
-                        clearInterval(interval);
-                        startApp();
+                const checkReady = setInterval(() => {
+                    if (window.FB_READY && window.lucide) {
+                        clearInterval(checkReady);
+                        initSystem();
                     }
-                }, 300);
-                return () => clearInterval(interval);
+                }, 500);
+                return () => clearInterval(checkReady);
             }, []);
 
-            const startApp = () => {
-                const { auth, utils, db } = window.KDP_CORE;
-                utils.onAuthStateChanged(auth, (user) => {
+            const initSystem = () => {
+                const { KDP_AUTH, KDP_SDK, KDP_DB } = window;
+                KDP_SDK.onAuthStateChanged(KDP_AUTH, (user) => {
                     if (!user) {
-                        utils.signInAnonymously(auth);
+                        KDP_SDK.signInAnonymously(KDP_AUTH).catch(e => setStatus('error'));
                     } else {
-                        // Carga de datos
-                        utils.onSnapshot(utils.collection(db, 'authors'), (snap) => {
-                            let list = [];
-                            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-                            if (list.length === 0) seedAuthors(utils, db);
-                            setAuthors(list.sort((a,b) => (a.createdAt || 0) - (b.createdAt || 0)));
-                        });
-
-                        utils.onSnapshot(utils.collection(db, 'projects'), (snap) => {
-                            let list = [];
-                            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-                            setProjects(list);
-                        });
-
-                        utils.onSnapshot(utils.collection(db, 'status'), (snap) => {
-                            let data = {};
-                            snap.forEach(d => data[d.id] = d.data());
-                            setWeeklyStatus(data);
-                            setAppReady(true);
-                        });
+                        syncData(KDP_SDK, KDP_DB);
                     }
                 });
             };
 
-            const seedAuthors = async (utils, db) => {
+            const syncData = (sdk, db) => {
+                try {
+                    // Sincronizar Marcas
+                    sdk.onSnapshot(sdk.collection(db, 'authors'), (snap) => {
+                        let list = [];
+                        snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                        if (list.length === 0) seedAuthors(sdk, db);
+                        setAuthors(list.sort((a,b) => (a.createdAt || 0) - (b.createdAt || 0)));
+                    });
+
+                    // Sincronizar Proyectos
+                    sdk.onSnapshot(sdk.collection(db, 'projects'), (snap) => {
+                        let list = [];
+                        snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+                        setProjects(list);
+                    });
+
+                    // Sincronizar Estatus
+                    sdk.onSnapshot(sdk.collection(db, 'status'), (snap) => {
+                        let data = {};
+                        snap.forEach(d => data[d.id] = d.data());
+                        setWeeklyStatus(data);
+                        setStatus('ready');
+                        const loader = document.getElementById('initial-loading');
+                        if(loader) loader.style.display = 'none';
+                    });
+                } catch (e) {
+                    setStatus('error');
+                }
+            };
+
+            const seedAuthors = async (sdk, db) => {
                 for (let i = 1; i <= 25; i++) {
-                    const id = `auth-${i}`;
-                    await utils.setDoc(utils.doc(db, 'authors', id), {
+                    await sdk.setDoc(sdk.doc(db, 'authors', `auth-${i}`), {
                         name: `Sello Editorial ${i}`,
                         active: true,
                         createdAt: Date.now() + i
@@ -151,7 +160,7 @@
 
             const activeAuthors = useMemo(() => authors.filter(a => a.active), [authors]);
             
-            const slots = useMemo(() => {
+            const currentSlots = useMemo(() => {
                 if (activeAuthors.length === 0) return [];
                 const start = (currentWeek - 1) * 10;
                 return Array.from({length: 10}).map((_, i) => {
@@ -168,138 +177,134 @@
                 });
             }, [currentWeek, activeAuthors, projects, weeklyStatus]);
 
-            if (!appReady) return null; // El loader HTML sigue visible hasta que appReady sea true
+            if (status === 'error') return (
+                <div className="h-screen flex items-center justify-center bg-rose-50 p-10 text-center">
+                    <div>
+                        <h1 className="text-2xl font-black text-rose-600 mb-2">ERROR DE CONEXIÓN</h1>
+                        <p className="text-rose-400">No se pudo cargar la base de datos. Revisa la consola o tu configuración de Firebase.</p>
+                    </div>
+                </div>
+            );
+
+            if (status === 'loading') return null;
 
             return (
-                <div className="min-h-screen bg-[#f8fafc] animate-in fade-in duration-700">
-                    <div className="max-w-7xl mx-auto p-4 md:p-8">
-                        {/* Header Superior */}
-                        <header className="flex flex-col lg:flex-row items-center justify-between gap-6 mb-10 bg-white p-6 rounded-[2.5rem] shadow-xl border border-white">
-                            <div className="flex items-center gap-4">
-                                <div className="bg-indigo-600 p-3 rounded-2xl shadow-lg shadow-indigo-100">
-                                    <Icon name="Rocket" color="white" />
+                <div className="min-h-screen pb-24 px-4 md:px-8 max-w-7xl mx-auto">
+                    {/* Header */}
+                    <header className="flex flex-col lg:flex-row items-center justify-between gap-6 my-10 bg-white p-6 rounded-[2.5rem] shadow-xl border border-white">
+                        <div className="flex items-center gap-4">
+                            <div className="bg-indigo-600 p-3 rounded-2xl shadow-lg shadow-indigo-100"><Icon name="Rocket" className="text-white" /></div>
+                            <div>
+                                <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">KDP Engine</h1>
+                                <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Enterprise Edition v20</p>
+                            </div>
+                        </div>
+                        <nav className="flex gap-1 bg-slate-100 p-1.5 rounded-2xl overflow-x-auto">
+                            {['calendar', 'authors'].map(tab => (
+                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'}`}>
+                                    {tab === 'calendar' ? 'Calendario' : 'Portafolio'}
+                                </button>
+                            ))}
+                        </nav>
+                    </header>
+
+                    {activeTab === 'calendar' && (
+                        <div className="space-y-8 animate-in fade-in duration-500">
+                            {/* Dashboard Superior */}
+                            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                                <div className="bg-white p-8 rounded-[3rem] border border-slate-200 flex items-center justify-between shadow-sm">
+                                    <button onClick={() => setCurrentWeek(w => Math.max(1, w - 1))} className="p-2"><Icon name="ChevronLeft" /></button>
+                                    <div className="text-center">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase leading-none mb-1">Semana</p>
+                                        <span className="text-5xl font-black text-indigo-600">{currentWeek}</span>
+                                    </div>
+                                    <button onClick={() => setCurrentWeek(w => w + 1)} className="p-2"><Icon name="ChevronRight" /></button>
                                 </div>
-                                <div>
-                                    <h1 className="text-2xl font-black text-slate-800 uppercase tracking-tight">KDP Master Engine</h1>
-                                    <p className="text-slate-400 text-[10px] font-bold uppercase tracking-widest">Enterprise Ownership v20</p>
+                                <div className="bg-slate-900 p-8 rounded-[3rem] shadow-2xl flex items-center justify-around col-span-3 text-white">
+                                    <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1">CAPACIDAD</p><p className="text-3xl font-black">10/sem</p></div>
+                                    <div className="text-center border-x border-slate-800 px-12"><p className="text-slate-500 text-[10px] font-black mb-1">MARCAS</p><p className="text-3xl font-black">{authors.length}</p></div>
+                                    <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1">SISTEMA</p><p className="text-xl font-black text-emerald-400">ONLINE</p></div>
                                 </div>
                             </div>
-                            <nav className="flex gap-1 bg-slate-100 p-1.5 rounded-2xl overflow-x-auto no-scrollbar">
-                                {[
-                                    { id: 'calendar', label: 'Calendario', icon: 'Calendar' },
-                                    { id: 'research', label: 'Generador', icon: 'Sparkles' },
-                                    { id: 'authors', label: 'Portafolio', icon: 'Briefcase' }
-                                ].map(tab => (
-                                    <button 
-                                        key={tab.id}
-                                        onClick={() => setActiveTab(tab.id)}
-                                        className={`flex items-center gap-2 px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === tab.id ? 'bg-white text-indigo-600 shadow-md' : 'text-slate-400'}`}
-                                    >
-                                        <Icon name={tab.icon} size={14} /> {tab.label}
-                                    </button>
-                                ))}
-                            </nav>
-                        </header>
 
-                        {activeTab === 'calendar' && (
-                            <div className="space-y-8">
-                                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                                    <div className="bg-white p-8 rounded-[3rem] border border-slate-200 flex items-center justify-between shadow-sm">
-                                        <button onClick={() => setCurrentWeek(w => Math.max(1, w - 1))} className="p-3 bg-slate-50 rounded-xl hover:bg-indigo-50 transition-colors"><Icon name="ChevronLeft" /></button>
-                                        <div className="text-center">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase">Semana</p>
-                                            <span className="text-5xl font-black text-indigo-600">{currentWeek}</span>
-                                        </div>
-                                        <button onClick={() => setCurrentWeek(w => w + 1)} className="p-3 bg-slate-50 rounded-xl hover:bg-indigo-50 transition-colors"><Icon name="ChevronRight" /></button>
-                                    </div>
-                                    <div className="bg-slate-900 p-10 rounded-[3rem] shadow-2xl flex items-center justify-around col-span-3 text-white">
-                                        <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Semanales</p><p className="text-3xl font-black text-indigo-400">10</p></div>
-                                        <div className="text-center border-x border-slate-800 px-12"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Portafolio</p><p className="text-3xl font-black">{projects.length}</p></div>
-                                        <div className="text-center"><p className="text-slate-500 text-[10px] font-black mb-1 uppercase">Marcas</p><p className="text-3xl font-black text-emerald-400">{authors.length}</p></div>
-                                    </div>
-                                </div>
-
-                                <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-2xl overflow-hidden">
-                                    <table className="w-full text-left">
-                                        <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
-                                            <tr>
-                                                <th className="pl-12 py-8">Sello Editorial</th>
-                                                <th className="px-6 py-8">Mercado</th>
-                                                <th className="px-6 py-8">Proyecto Asignado</th>
-                                                <th className="pr-12 py-8 text-right">KDP</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-50">
-                                            {slots.map((slot, i) => (
-                                                <tr key={i} className="hover:bg-slate-50/50 transition-all group">
-                                                    <td className="pl-12 py-8">
-                                                        <div className="flex items-center gap-4">
-                                                            <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 font-black text-xs group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-inner">{i + 1}</div>
-                                                            <span className="text-sm font-black text-slate-800 uppercase tracking-tight">{slot.author?.name}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-8"><span className={`px-4 py-2 rounded-xl text-[10px] font-black border ${slot.lang.color}`}>{slot.lang.code}</span></td>
-                                                    <td className="px-6 py-8">
-                                                        <div className="flex items-center gap-3">
-                                                            <select 
-                                                                className="bg-transparent border-none text-sm font-bold text-slate-600 outline-none w-56 focus:ring-0 cursor-pointer"
-                                                                value={weeklyStatus[slot.key]?.projectId || ''}
-                                                                onChange={(e) => {
-                                                                    const { utils, db } = window.KDP_CORE;
-                                                                    utils.setDoc(utils.doc(db, 'status', slot.key), { projectId: e.target.value }, { merge: true });
-                                                                }}
-                                                            >
-                                                                <option value="">-- Sin asignar --</option>
-                                                                {projects.filter(p => p.authorId === slot.author?.id).map(p => (
-                                                                    <option key={p.id} value={p.id}>{p.title}</option>
-                                                                ))}
-                                                            </select>
-                                                            {slot.project && <button onClick={() => setViewingProject(slot.project)} className="text-indigo-600 hover:scale-110 transition-transform"><Icon name="Eye" size={18}/></button>}
-                                                        </div>
-                                                    </td>
-                                                    <td className="pr-12 py-8 text-right">
-                                                        <button 
-                                                            onClick={() => {
-                                                                const { utils, db } = window.KDP_CORE;
-                                                                utils.setDoc(utils.doc(db, 'status', slot.key), { status: slot.isPublished ? 'pending' : 'published' }, { merge: true });
+                            {/* Tabla de Publicaciones */}
+                            <div className="bg-white rounded-[3.5rem] border border-slate-200 shadow-xl overflow-hidden overflow-x-auto">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 text-slate-400 text-[10px] font-black uppercase tracking-[0.2em]">
+                                        <tr>
+                                            <th className="pl-12 py-8">Turno & Marca</th>
+                                            <th className="px-6 py-8">Mercado</th>
+                                            <th className="px-6 py-8">Proyecto Asignado</th>
+                                            <th className="pr-12 py-8 text-right">Estatus</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {currentSlots.map((slot, i) => (
+                                            <tr key={i} className="hover:bg-indigo-50/20 transition-all group">
+                                                <td className="pl-12 py-8">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 font-black text-xs">{i+1}</div>
+                                                        <span className="text-sm font-black text-slate-800 uppercase">{slot.author?.name}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-8"><span className={`px-4 py-2 rounded-xl text-[10px] font-black border-2 ${slot.lang.color}`}>{slot.lang.code}</span></td>
+                                                <td className="px-6 py-8">
+                                                    <div className="flex items-center gap-3">
+                                                        <select 
+                                                            className="bg-transparent border-none text-sm font-bold text-slate-600 outline-none w-56"
+                                                            value={weeklyStatus[slot.key]?.projectId || ''}
+                                                            onChange={(e) => {
+                                                                const { KDP_SDK, KDP_DB } = window;
+                                                                KDP_SDK.setDoc(KDP_SDK.doc(KDP_DB, 'status', slot.key), { projectId: e.target.value }, { merge: true });
                                                             }}
-                                                            className={`p-4 rounded-3xl transition-all ${slot.isPublished ? 'bg-emerald-100 text-emerald-600 shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-300'}`}
                                                         >
-                                                            <Icon name="CheckCircle2" size={24} />
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                            <option value="">-- Sin asignar --</option>
+                                                            {projects.filter(p => p.authorId === slot.author?.id).map(p => (
+                                                                <option key={p.id} value={p.id}>{p.title}</option>
+                                                            ))}
+                                                        </select>
+                                                        {slot.project && <button onClick={() => setViewingProject(slot.project)} className="text-indigo-600"><Icon name="Eye" size={18}/></button>}
+                                                    </div>
+                                                </td>
+                                                <td className="pr-12 py-8 text-right">
+                                                    <button 
+                                                        onClick={() => {
+                                                            const { KDP_SDK, KDP_DB } = window;
+                                                            KDP_SDK.setDoc(KDP_SDK.doc(KDP_DB, 'status', slot.key), { status: slot.isPublished ? 'pending' : 'published' }, { merge: true });
+                                                        }}
+                                                        className={`p-4 rounded-3xl transition-all ${slot.isPublished ? 'bg-emerald-100 text-emerald-600 shadow-xl shadow-emerald-100' : 'bg-slate-50 text-slate-300'}`}
+                                                    >
+                                                        <Icon name="CheckCircle2" size={24} />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
-                        )}
+                        </div>
+                    )}
 
-                        {activeTab === 'authors' && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-in slide-in-from-bottom duration-500">
-                                {authors.map((a, i) => (
-                                    <div key={a.id} className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:border-indigo-200 transition-all">
-                                        <div className="absolute -top-4 -right-4 bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center font-black text-slate-200 text-2xl group-hover:bg-indigo-50 transition-all">{i+1}</div>
-                                        <p className="text-[9px] font-black text-slate-300 uppercase mb-4 tracking-widest">Sello Operativo</p>
-                                        <input 
-                                            type="text" 
-                                            value={a.name}
-                                            onChange={(e) => {
-                                                const { utils, db } = window.KDP_CORE;
-                                                utils.updateDoc(utils.doc(db, 'authors', a.id), { name: e.target.value });
-                                            }}
-                                            className="w-full text-xl font-black text-slate-800 bg-transparent outline-none mb-8 border-b-2 border-transparent focus:border-indigo-100 pb-2"
-                                        />
-                                        <div className="pt-6 border-t border-slate-50 flex justify-between items-center">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Activos: {projects.filter(p => p.authorId === a.id).length}</p>
-                                            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></div>
-                                        </div>
+                    {activeTab === 'authors' && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 animate-in slide-in-from-bottom duration-500">
+                            {authors.map((a, i) => (
+                                <div key={a.id} className="bg-white p-10 rounded-[3.5rem] border border-slate-200 shadow-sm relative overflow-hidden">
+                                    <div className="absolute -top-4 -right-4 bg-slate-50 w-24 h-24 rounded-full flex items-center justify-center font-black text-slate-200 text-4xl">{i+1}</div>
+                                    <p className="text-[9px] font-black text-slate-400 uppercase mb-4 tracking-widest leading-none">Sello Operativo</p>
+                                    <input 
+                                        type="text" 
+                                        value={a.name}
+                                        onChange={(e) => window.KDP_SDK.updateDoc(window.KDP_SDK.doc(window.KDP_DB, 'authors', a.id), { name: e.target.value })}
+                                        className="w-full text-xl font-black text-slate-800 bg-transparent outline-none mb-10 border-b border-transparent focus:border-indigo-100 pb-2"
+                                    />
+                                    <div className="pt-6 border-t border-slate-50 flex justify-between items-center">
+                                        <p className="text-[10px] font-black text-slate-400 uppercase">Activos: {projects.filter(p => p.authorId === a.id).length}</p>
+                                        <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]"></div>
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     {/* Modal Detalle Proyecto */}
                     {viewingProject && (
@@ -315,40 +320,31 @@
                                 <div className="p-14 overflow-y-auto custom-scrollbar flex-1 bg-white">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         {viewingProject.content?.map((c, i) => (
-                                            <div key={i} className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 hover:bg-white hover:shadow-xl transition-all duration-300 group">
-                                                <div className="flex gap-6">
-                                                    <span className="text-3xl font-black text-indigo-100 group-hover:text-indigo-600 transition-colors">{(i+1).toString().padStart(2,'0')}</span>
-                                                    <div>
-                                                        <p className="text-sm font-black text-slate-800 uppercase mb-2 tracking-tight">{c.t}</p>
-                                                        <p className="text-xs text-slate-400 leading-relaxed font-medium italic">{c.s || "Resumen operativo pendiente."}</p>
-                                                    </div>
-                                                </div>
+                                            <div key={i} className="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 hover:bg-white hover:shadow-xl transition-all">
+                                                <span className="text-3xl font-black text-indigo-100">{(i+1).toString().padStart(2,'0')}</span>
+                                                <p className="text-sm font-black text-slate-800 uppercase mt-2">{c.t}</p>
+                                                <p className="text-xs text-slate-400 leading-relaxed font-medium italic mt-2">{c.s || "Resumen pendiente."}</p>
                                             </div>
                                         ))}
                                     </div>
                                 </div>
-                                <div className="px-14 py-8 border-t border-slate-100 flex justify-end bg-slate-50/50">
-                                    <button onClick={() => setViewingProject(null)} className="bg-slate-900 text-white px-12 py-4 rounded-3xl font-black text-xs uppercase tracking-widest shadow-xl hover:bg-indigo-600 transition-all">Cerrar Biblia</button>
-                                </div>
                             </div>
                         </div>
                     )}
+
+                    {/* Footer */}
+                    <footer className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t border-slate-200 p-4 z-40">
+                        <div className="max-w-7xl mx-auto flex items-center justify-between px-8 text-slate-400">
+                           <div className="flex items-center gap-3"><div className="w-2 h-2 rounded-full bg-emerald-500"></div><span className="text-[10px] font-black uppercase tracking-widest">Network Synchronized</span></div>
+                           <p className="text-[10px] font-black uppercase tracking-[0.4em]">Engine v20.0 Final © 2026</p>
+                        </div>
+                    </footer>
                 </div>
             );
         }
 
-        // Renderizado Final
-        const rootElement = document.getElementById('root');
-        const root = ReactDOM.createRoot(rootElement);
+        const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
-
-        // Ocultamos el loader inicial cuando React está listo
-        const observer = new MutationObserver(() => {
-            const loader = document.getElementById('fallback-loader');
-            if (loader) loader.style.display = 'none';
-            observer.disconnect();
-        });
-        observer.observe(rootElement, { childList: true });
     </script>
 </body>
 </html>
